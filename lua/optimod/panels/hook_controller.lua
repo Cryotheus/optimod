@@ -26,15 +26,9 @@ function PANEL:Init()
 		local width, height = header:GetSize()
 		local size = 15
 		
-		check_box:Dock(FILL)
-		check_box:DockMargin(width - size, 4, 0, height - size - 4)
-		check_box:SetChecked(true)
+		function check_box:OnChange(value) print("We tried to change the hook!", self.HookController.HookEvent, self.HookController.HookID, "changes to", value) end
 		
-		function self:OnChange(value)
-			--still have not started the hook controller function... well we won't do it here anyways; we will do the functionality in main.lua
-			print("We tried to change the hook!", self.HookEvent, self.HookID, "changes to", value)
-		end
-		
+		check_box.HookController = self
 		self.CheckBox = check_box
 	end
 	
@@ -96,8 +90,8 @@ end
 function PANEL:SetHook(event, id)
 	self:SetHookEvent(tostring(event) or "broketh")
 	self:SetHookID(id)
-	
 	self:SetLabel(event .. "::" .. (tostring(id) or "???"))
+	self:UpdateCheckBox()
 end
 
 function PANEL:SetHookDescription(description)
@@ -112,6 +106,24 @@ function PANEL:SetEffectivityColor(color)
 	self.EffectivityColor = color
 	
 	self.Header:SetColor(color)
+end
+
+function PANEL:UpdateCheckBox()
+	local check_box = self.CheckBox
+	local event = self.HookEvent
+	local hooks = hook.GetTable()
+	local id = self.HookID
+	
+	if hooks[event] and hooks[event][id] then check_box:SetChecked(true) --the hook is running
+	elseif OptimodHooks[event] and OptimodHooks[event][id] then check_box:SetChecked(false) --the hook was disabled by this addon
+	else --the hook was disabled somewhere else, don't interfere
+		check_box:SetChecked(false)
+		check_box:SetEnabled(false)
+		
+		return
+	end
+	
+	check_box:SetEnabled(true)
 end
 
 derma.DefineControl("OptimodHookController", "Hook entry in the Optimod GUI's Hook tab", PANEL, "DCollapsibleCategory")

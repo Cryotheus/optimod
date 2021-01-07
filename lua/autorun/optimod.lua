@@ -6,6 +6,7 @@ local scripts = {
 }
 
 --make them download localizations, I wonder if gmod does this on its own...
+resource.AddSingleFile("resource/localization/de/optimod.properties")
 resource.AddSingleFile("resource/localization/en/optimod.properties")
 
 --include and addcslua all the files dependent by realm

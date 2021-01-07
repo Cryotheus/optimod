@@ -1,8 +1,15 @@
-local current_config = {}
+--locals
 local first_time = false
-local frame_gui = vgui.GetWorldPanel():Find("OptimodGUI")
+local frame_gui = vgui.GetWorldPanel():Find("OptimodGUI") --for reload
+local hook_controllers = {}
 
---constants
+--local functions
+local fl_hook_Add = OptimodHookAdd or hook.Add
+local fl_hook_Remove = OptimodHookRemove or hook.Remove
+
+--tables!
+local current_config = {}
+
 local effectivity_colors = {
 	Color(240, 255, 0),
 	Color(255, 255, 0),
@@ -40,34 +47,11 @@ local expensive_hooks = {
 		RenderToyTown =			{effectivity = 3}
 	},
 	
-	Think = {DOFThink = {effectivity = 2}}
+	Think = {DOFThink = {effectivity = 2}},
+	
+	HUDPaint = {optimod_test = {effectivity = 5}}
 }
 
---format for the optimal_convars table
---[[ 
-	"con_var" = {
-		--OPTIONAL
-		--controller type for convar, defaults to "toggle"
-		controller_type = "choices",
-		
-		--the effectivity
-			--1 minimal performance increase whith optimal setting, or does not increase performance on its own
-			--2 minimal performance increase whith optimal setting
-			--3 measureable performance increase with optimal setting
-			--4 noticeable performace increase with optimal setting
-			--5 very noticeable performance increase with optimal setting	
-		effectivity = 2,
-		
-		--the optimal value for the convar
-		optimal_value = 1,
-		
-		--OPTIONAL
-		--the available values, true means any value from 0 to 2^31 - 1
-		values = {[0] = "Disabled", [1] = "Enabled", [2] = "Half way up"},
-	}
-]]
-
---refer to multiline comment above
 local optimal_convars = { 
 	cl_threaded_bone_setup = {
 		effectivity = 3,
@@ -158,15 +142,20 @@ local panel_paint_funcitons = {
 	end
 }
 
---calc_vars
-local advert_h = 16
-local frame_header = 24
-local frame_size = 640
-local sheet_header = 20
+----calc_vars
+	local advert_h = 16
+	local frame_header = 24
+	local frame_size = 640
+	local sheet_header = 20
 
-local frame_gui_h
-local frame_gui_w
-local sheet_h
+	local frame_gui_h
+	local frame_gui_w
+	local sheet_h
+
+--globals
+OptimodHookAdd = OptimodHookAdd or fl_hook_Add
+OptimodHookRemove = OptimodHookRemove or fl_hook_Remove
+OptimodHooks = OptimodHooks or {}
 
 --local functions
 local function calc_vars(scr_w, scr_h)
@@ -197,6 +186,32 @@ local function config_load()
 end
 
 local function config_save() file.Write("optimod/config.json", util.TableToJSON(current_config, true)) end
+
+local function disable_hook(event, id, func)
+	print("disable!", event, id, func)
+	
+	local event_hook = func or hook.GetTable()[event][id]
+	
+	--store the function in case we want to restore it later
+	if OptimodHooks[event] then OptimodHooks[event][id] = event_hook
+	else OptimodHooks[event] = {[id] = event_hook} end
+	
+	--remove it from the hook table
+	fl_hook_Remove(event, id)
+end
+
+local function enable_hook(event, id, func)
+	print("enable!", event, id, func)
+	
+	local event_hook = func or OptimodHooks[event][id]
+	
+	OptimodHooks[event][id] = nil
+	
+	--we don't need to store a bunch of empty tables
+	if table.IsEmpty(OptimodHooks[event]) then OptimodHooks[event] = nil end
+	
+	fl_hook_Add(event, id, event_hook)
+end
 
 local function open_gui()
 	--close the existing gui
@@ -308,13 +323,35 @@ local function open_gui()
 				
 				list_event.VBar:SetEnabled(false)
 				
+				hook_controllers[event] = {}
+				
 				--add all the controllers
 				for id, hook_datum in pairs(hook_data) do
 					local hook_controller = vgui.Create("OptimodHookController", list_event)
+					local check_box = hook_controller.CheckBox
+					hook_controllers[event][id] = hook_controller --store for later so we can edit them easily
 					
 					hook_controller:SetEffectivityColor(effectivity_colors[hook_datum.effectivity])
 					hook_controller:SetHook(event, id)
 					hook_controller:SetHookDescription("#optimod.hooks." .. event .. "." .. tostring(id))
+					
+					
+					function check_box:OnChange(value)
+						local controller = self.HookController
+						
+						local hooks = value and OptimodHooks or hook.GetTable()
+						local event = controller.HookEvent
+						local id = controller.HookID
+						
+						if hooks[event] then
+							local event_hook = hooks[event][id]
+							
+							if event_hook then
+								if value then enable_hook(event, id, event_hook)
+								else disable_hook(event, id, event_hook) end
+							end
+						end
+					end
 					
 					list_event:AddItem(hook_controller)
 				end
@@ -327,7 +364,7 @@ local function open_gui()
 		
 		--TOP docking takes priority over FILL docking, so we don't have to worry about the sheet getting covered by the credation
 		sheet:Dock(TOP)
-		sheet:SetHeight(sheet_h) --make room for my advert please
+		sheet:SetHeight(sheet_h) --make room for our credation
 	end
 	
 	do --credation panel... please don't remove me ;-;
@@ -352,17 +389,99 @@ local function open_gui()
 		panel:Dock(FILL)
 	end
 	
+	--so we don't try to edit a check box that was removed
+	function frame_gui:OnRemove()
+		frame_gui = nil
+		hook_controllers = {}
+	end
+	
 	frame_gui:Center()
 	frame_gui:MakePopup()
 end
 
---concommands the callback for `concommand.Add` is `function(ply, command, arguments, arguments_string)`
+local function update_hook_controller(event, id)
+	print("attempt to update hook controllers")
+	print("and text here")
+	print("hook_controllers", hook_controllers)
+	
+	if hook_controllers then
+		local hook_controller = hook_controllers[event] and hook_controllers[event][id] or false
+		
+		if IsValid(hook_controller) then print(event, id, hook_controller) hook_controller:UpdateCheckBox() print("succ")
+		else print("almost made it") end
+		
+		return hook_controller
+	else print("failed!") end
+end
+
+--concommands
+--the callback for `concommand.Add` is `function(ply, command, arguments, arguments_string)`
 concommand.Add("optimod_gui", open_gui, nil, "Open the GUI for Optimod")
 concommand.Add("optimod_load", config_load, nil, "Load the saved configuration for Optimod.")
 concommand.Add("optimod_save", config_save, nil, "Save the current configuration for Optimod.")
 
+--hooks
+hook.Add("Initialize", "optimod", function()
+	local fl_hook_Add = OptimodHookAdd or hook.Add
+	local fl_hook_Remove = OptimodHookRemove or hook.Remove
+	OptimodHookAdd = fl_hook_Add
+	OptimodHookRemove = fl_hook_Remove
+	
+	function hook.Add(event, id, func, ...)
+		--update the function if the hook is re-added when it is disabled
+		if OptimodHooks[event] and OptimodHooks[event][id] then
+			print("hook.Add with stored hook")
+			
+			OptimodHooks[event][id] = func
+		else
+			print("hook.Add with other hook")
+			
+			fl_hook_Add(event, id, func, ...)
+			
+			if expensive_hooks[event] and expensive_hooks[event][id] then
+				print("hook.Add with tracked hook")
+				
+				--if the hook was a hook we tracked, update the GUI
+				--we also need to set its checked state to what we had in our configuration
+				local hook_controller = update_hook_controller(event, id)
+				
+				--hook_controller.CheckBox:SetChecked(blah)
+			end
+		end
+	end
+
+	function hook.Remove(event, id, ...)
+		if OptimodHooks[event] and OptimodHooks[event][id] then
+			print("hook.Remove with stored hook")
+			
+			OptimodHooks[event][id] = nil
+			
+			if table.IsEmpty(OptimodHooks[event]) then OptimodHooks[event] = nil end
+			
+			update_hook_controller(event, id)
+		else
+			print("hook.Remove with other hook")
+			
+			fl_hook_Remove(event, id, ...)
+			
+			if expensive_hooks[event] and expensive_hooks[event][id] then
+				print("hook.Remove with tracked hook")
+				
+				update_hook_controller(event, id)
+			end
+		end
+	end
+end)
+
 --post
 calc_vars(ScrW(), ScrH())
 
---reload
-if frame_gui then open_gui() end
+do ---[[ reload
+	if frame_gui then
+		hook.GetTable().Initialize.optimod()
+		open_gui()
+	end
+	
+	hook.Add("HUDPaint", "optimod_test", function() surface.SetDrawColor(color_white) surface.DrawRect(100, 100, 20, 20) end)
+	--]]
+end
