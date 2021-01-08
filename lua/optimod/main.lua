@@ -4,6 +4,8 @@ local frame_gui = vgui.GetWorldPanel():Find("OptimodGUI")
 local hook_controllers = {}
 
 --local functions
+local disable_hook
+local enable_hook
 local fl_hook_Add = OptimodHookAdd
 local fl_hook_Remove = OptimodHookRemove
 local update_hook_controller
@@ -47,9 +49,7 @@ local expensive_hooks = {
 		RenderToyTown =			{effectivity = 3}
 	},
 	
-	Think = {DOFThink = {effectivity = 2}},
-	
-	HUDPaint = {optimod_test = {effectivity = 5}}
+	Think = {DOFThink = {effectivity = 2}}
 }
 
 local optimal_convars = { 
@@ -180,13 +180,22 @@ local function config_load()
 					local active = hooks[event] and hooks[event][id]
 					local disabled = OptimodHooks[event] and OptimodHooks[event][id]
 					
-					if disabled or active then expensive_hooks_copy[event][id] = nil end
-					if active then disable_hook(event, id, active or nil) end
+					if active or disabled then expensive_hooks_copy[event][id] = nil end
+					
+					if active then
+						disable_hook(event, id, active or nil)
+						update_hook_controller(event, id)
+					end
 				end
 			end
 			
 			--enable what wasn't disabled
-			for event, ids in pairs(expensive_hooks_copy) do for id in pairs(ids) do enable_hook(event, id, hooks[event] and hooks[event][id] or nil) end end
+			for event, ids in pairs(expensive_hooks_copy) do
+				for id, data in pairs(ids) do
+					enable_hook(event, id, hooks[event] and hooks[event][id] or nil)
+					update_hook_controller(event, id)
+				end
+			end
 			
 			return true
 		end
@@ -196,11 +205,19 @@ local function config_load()
 end
 
 local function config_save()
+	local config = {}
+	
+	for event, ids in pairs(OptimodHooks) do
+		config[event] = {}
+		
+		for id in pairs(ids) do config[event][id] = true end
+	end
+	
 	file.CreateDir("optimod")
-	file.Write("optimod/config.json", util.TableToJSON(OptimodHooks, true))
+	file.Write("optimod/config.json", util.TableToJSON(config, true))
 end
 
-local function disable_hook(event, id, func)
+function disable_hook(event, id, func)
 	local event_hook = func or hook.GetTable()[event][id]
 	
 	--store the function in case we want to restore it later
@@ -211,13 +228,15 @@ local function disable_hook(event, id, func)
 	fl_hook_Remove(event, id)
 end
 
-local function enable_hook(event, id, func)
+function enable_hook(event, id, func)
 	local event_hook = func or OptimodHooks[event][id]
 	
-	OptimodHooks[event][id] = nil
-	
-	--we don't need to store a bunch of empty tables
-	if table.IsEmpty(OptimodHooks[event]) then OptimodHooks[event] = nil end
+	if OptimodHooks[event] then
+		OptimodHooks[event][id] = nil
+		
+		--we don't need to store a bunch of empty tables
+		if table.IsEmpty(OptimodHooks[event]) then OptimodHooks[event] = nil end
+	end
 	
 	fl_hook_Add(event, id, event_hook)
 	update_hook_controller(event, id)
@@ -345,9 +364,28 @@ local function open_gui()
 				panel:Dock(FILL)
 				panel:SetHeight(frame_gui_h * 0.08)
 				
+				local function config_buttons_timer()
+					timer.Create("optimod_config_buttons", 2, 1, function()
+						if IsValid(button_load) and IsValid(button_save) then
+							button_load:SetEnabled(true)
+							button_load:SetText("#optimod.hook.load")
+							button_save:SetEnabled(true)
+							button_save:SetText("#optimod.hook.save")
+						end
+					end)
+				end
+				
 				do --save button
 					button_save = vgui.Create("DButton", panel)
-					button_save.DoClick = config_save
+					
+					function button_save:DoClick()
+						config_buttons_timer()
+						config_save()
+						
+						button_load:SetEnabled(false)
+						self:SetEnabled(false)
+						self:SetText("#optimod.hook.saved")
+					end
 					
 					button_save:Dock(FILL)
 					button_save:SetText("#optimod.hook.save")
@@ -356,6 +394,15 @@ local function open_gui()
 				do --load button
 					button_load = vgui.Create("DButton", panel)
 					button_load.DoClick = config_load
+					
+					function button_load:DoClick()
+						config_buttons_timer()
+						config_load()
+						
+						button_save:SetEnabled(false)
+						self:SetEnabled(false)
+						self:SetText("#optimod.hook.loaded")
+					end
 					
 					button_load:Dock(FILL)
 					button_load:SetText("#optimod.hook.load")
@@ -453,6 +500,8 @@ local function open_gui()
 	function frame_gui:OnRemove()
 		frame_gui = nil
 		hook_controllers = {}
+		
+		timer.Remove("optimod_config_buttons")
 	end
 	
 	frame_gui:Center()
@@ -469,8 +518,6 @@ function update_hook_controller(event, id)
 			hook_controller:UpdateCheckBox()
 			hook_controller:SetEffectivityColor(hooks[event] and hooks[event][id] and effectivity_colors[expensive_hooks[event][id].effectivity] or effectivity_colors.optimal)
 		end
-		
-		debug.Trace()
 		
 		return hook_controller
 	end
