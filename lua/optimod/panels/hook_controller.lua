@@ -26,8 +26,6 @@ function PANEL:Init()
 		local width, height = header:GetSize()
 		local size = 15
 		
-		function check_box:OnChange(value) print("We tried to change the hook!", self.HookController.HookEvent, self.HookController.HookID, "changes to", value) end
-		
 		check_box.HookController = self
 		self.CheckBox = check_box
 	end

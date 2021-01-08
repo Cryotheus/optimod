@@ -5,25 +5,67 @@ local PANEL = {
 
 local convar_entry_types = {
 	choices = {
-		init = function(header)
-			local check_box = vgui.Create("DCheckBox", header) 
+		init = function(controller, header, convar, values)
+			local choices = {}
+			local combo_box = vgui.Create("DComboBox", header) 
+			local convar_value = GetConVar(convar):GetString()
 			
-			return check_box
+			for index, value in pairs(values) do
+				local string_value = tostring(value)
+				
+				choices[combo_box:AddChoice("#optimod.convars." .. convar .. "." .. value, value, string_value == convar_value)] = string_value
+			end
+			
+			combo_box:SetConVar(convar)
+			--combo_box:ChooseOption("#optimod.convars." .. convar .. "." .. convar_value, choices[convar_value] or 0)
+			
+			function combo_box:OnSelect(index, text, data) controller:ChangedOptimal(data == controller.OptimalValue) end
+			
+			return combo_box
 		end,
+		
 		layout = function(self, header)
 			local width, height = header:GetSize()
-			local size = 15
+			local text_width, text_height = header:GetTextSize()
 			
 			self:Dock(FILL)
-			self:DockMargin(width - size, 4, 0, height - size - 4)
+			self:DockMargin(math.max(text_width + 8, width * 0.5), 4, 0, height - 16 - 4)
 		end
 	},
+	
+	range = {
+		init = function(controller, header, convar, values)
+			local number_wang = vgui.Create("DNumberWang", header) 
+			
+			number_wang:SetConVar(convar)
+			number_wang:SetDecimals(0)
+			number_wang:SetValue(GetConVar(convar):GetInt())
+			number_wang:SetMinMax(unpack(values))
+			
+			function number_wang:OnChange() controller:ChangedOptimal(self:GetValue() == controller.OptimalValue) end
+			
+			return number_wang
+		end,
+		
+		layout = function(self, header)
+			local width, height = header:GetSize()
+			
+			self:Dock(FILL)
+			self:DockMargin(width - 128, 4, 0, height - 16 - 4)
+		end
+	},
+	
 	toggle = {
-		init = function(header)
+		init = function(controller, header, convar)
 			local check_box = vgui.Create("DCheckBox", header) 
+			
+			check_box:SetConVar(convar)
+			
+			function check_box:OnChange(value) controller:ChangedOptimal((value and 1 or 0) == controller.OptimalValue) end
 			
 			return check_box
 		end,
+		
 		layout = function(self, header)
 			local width, height = header:GetSize()
 			local size = 15
@@ -37,13 +79,14 @@ local convar_entry_types = {
 AccessorFunc(PANEL, "EffectivityColor", "EffectivityColor")
 AccessorFunc(PANEL, "ConVar", "ConVar", FORCE_STRING) --force probably doesn't matter because we are overriding the function anyways
 AccessorFunc(PANEL, "ConVarDescription", "ConVarDescription", FORCE_STRING)
+AccessorFunc(PANEL, "OptimalValue", "OptimalValue")
 
 --creates the panel to change the convar
-function PANEL:CreateConVarController(controller_type)
+function PANEL:ChangedOptimal(is_optimal) end
+
+function PANEL:CreateConVarController(controller_type, values)
 	if convar_entry_types[controller_type] then
-		local convar_controller = convar_entry_types[controller_type].init(self.Header)
-		
-		convar_controller:SetConVar(self.ConVar)
+		local convar_controller = convar_entry_types[controller_type].init(self, self.Header, self.ConVar, values)
 		
 		self.ConVarController = convar_controller
 		self.ConVarControllerType = controller_type

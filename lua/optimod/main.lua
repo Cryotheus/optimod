@@ -1,15 +1,14 @@
 --locals
 local first_time = false
-local frame_gui = vgui.GetWorldPanel():Find("OptimodGUI") --for reload
+local frame_gui = vgui.GetWorldPanel():Find("OptimodGUI")
 local hook_controllers = {}
 
 --local functions
-local fl_hook_Add = OptimodHookAdd or hook.Add
-local fl_hook_Remove = OptimodHookRemove or hook.Remove
+local fl_hook_Add = OptimodHookAdd
+local fl_hook_Remove = OptimodHookRemove
+local update_hook_controller
 
 --tables!
-local current_config = {}
-
 local effectivity_colors = {
 	Color(240, 255, 0),
 	Color(255, 255, 0),
@@ -20,6 +19,7 @@ local effectivity_colors = {
 }
 
 local expensive_hooks = {
+	--I used to have more than effectivity in the hook tables, but now its just effectivity. Leaving them as tables instead of numbers for the future when I add special hooks.
 	NeedsDepthPass = {NeedsDepthPass_Bokeh = {effectivity = 3}},
 	
 	PostDrawEffects = {
@@ -71,12 +71,8 @@ local optimal_convars = {
 	mat_queue_mode = {
 		controller_type = "choices",
 		effectivity = 3,
-		optimal_value = -1,
-		values = {--needs rework, value descriptions are now handled in localization files
-			[-1] = "Default",
-			[0] = "Single thread (effectively disables)",
-			[2] = "Multithreaded"
-		}
+		optimal_value = 2,
+		values = {-1, 0, 2}
 	},
 	
 	mat_shadowstate = {
@@ -100,9 +96,10 @@ local optimal_convars = {
 	},
 	
 	r_shadowmaxrendered = {
+		controller_type = "range",
 		effectivity = 2,
 		optimal_value = 0,
-		values = true
+		values = {0, 64}
 	},
 	
 	r_shadowrendertotexture = {
@@ -153,8 +150,6 @@ local panel_paint_funcitons = {
 	local sheet_h
 
 --globals
-OptimodHookAdd = OptimodHookAdd or fl_hook_Add
-OptimodHookRemove = OptimodHookRemove or fl_hook_Remove
 OptimodHooks = OptimodHooks or {}
 
 --local functions
@@ -176,7 +171,22 @@ local function config_load()
 		local json = util.JSONToTable(file_read)
 		
 		if json then
-			current_config = json
+			local expensive_hooks_copy = table.Copy(expensive_hooks)
+			local hooks = hook.GetTable()
+			
+			--disable what was in the config
+			for event, ids in pairs(json) do
+				for id in pairs(ids) do
+					local active = hooks[event] and hooks[event][id]
+					local disabled = OptimodHooks[event] and OptimodHooks[event][id]
+					
+					if disabled or active then expensive_hooks_copy[event][id] = nil end
+					if active then disable_hook(event, id, active or nil) end
+				end
+			end
+			
+			--enable what wasn't disabled
+			for event, ids in pairs(expensive_hooks_copy) do for id in pairs(ids) do enable_hook(event, id, hooks[event] and hooks[event][id] or nil) end end
 			
 			return true
 		end
@@ -185,11 +195,12 @@ local function config_load()
 	return true
 end
 
-local function config_save() file.Write("optimod/config.json", util.TableToJSON(current_config, true)) end
+local function config_save()
+	file.CreateDir("optimod")
+	file.Write("optimod/config.json", util.TableToJSON(OptimodHooks, true))
+end
 
 local function disable_hook(event, id, func)
-	print("disable!", event, id, func)
-	
 	local event_hook = func or hook.GetTable()[event][id]
 	
 	--store the function in case we want to restore it later
@@ -201,8 +212,6 @@ local function disable_hook(event, id, func)
 end
 
 local function enable_hook(event, id, func)
-	print("enable!", event, id, func)
-	
 	local event_hook = func or OptimodHooks[event][id]
 	
 	OptimodHooks[event][id] = nil
@@ -211,6 +220,7 @@ local function enable_hook(event, id, func)
 	if table.IsEmpty(OptimodHooks[event]) then OptimodHooks[event] = nil end
 	
 	fl_hook_Add(event, id, event_hook)
+	update_hook_controller(event, id)
 end
 
 local function open_gui()
@@ -237,21 +247,32 @@ local function open_gui()
 			label_info:SetContentAlignment(7)
 			label_info:SetWrap(true)
 			
-			label_info:SetText("#optimod.descriptions.info")
-			sheet:AddSheet("#optimod.tabs.info", panel_info, "icon16/information.png")
+			label_info:SetText("#optimod.info.description")
+			sheet:AddSheet("#optimod.info.tab", panel_info, "icon16/information.png")
 		end
 		
 		do --convars
 			
 			local list_convars = vgui.Create("DCategoryList", sheet)
 			
-			do
+			do --info label
 				local label_info = vgui.Create("DLabel", sheet)
 				
 				label_info:SetAutoStretchVertical(true)
-				label_info:SetText("#optimod.descriptions.convar")
+				label_info:SetText("#optimod.convar.description")
 				label_info:SetWrap(true)
 				list_convars:AddItem(label_info)
+			end
+			
+			do --warning label
+				local label_warning = vgui.Create("DLabel", sheet)
+				
+				label_warning:SetAutoStretchVertical(true)
+				label_warning:SetColor(Color(255, 0, 0))
+				label_warning:SetFont("DermaDefaultBold")
+				label_warning:SetText("#optimod.convar.warning")
+				label_warning:SetWrap(true)
+				list_convars:AddItem(label_warning)
 			end
 			
 			do --I don't feel like doing it the right way >:D
@@ -273,11 +294,14 @@ local function open_gui()
 				
 				--effectivity colors
 				if convar and convar:GetString() == tostring(constructor_data.optimal_value) then convar_controller:SetEffectivityColor(effectivity_colors.optimal)
-				else convar_controller:SetEffectivityColor(effectivity_colors[constructor_data.effectivity] or Color(0, 0, 255)) end
+				else convar_controller:SetEffectivityColor(effectivity_colors[constructor_data.effectivity] or color_white) end
 				
 				--convar controller
 				convar_controller:CreateConVarController(constructor_data.controller_type or "toggle", constructor_data.values)
 				convar_controller:SetConVarDescription("#optimod.convars." .. console_variable)
+				convar_controller:SetOptimalValue(constructor_data.optimal_value)
+				
+				function convar_controller:ChangedOptimal(is_optimal) convar_controller:SetEffectivityColor(is_optimal and effectivity_colors.optimal or effectivity_colors[constructor_data.effectivity]) end
 				
 				--put it in the collapsible category list
 				list_convars:AddItem(convar_controller)
@@ -286,29 +310,64 @@ local function open_gui()
 			list_convars.Paint = panel_paint_funcitons.black
 			
 			--add the sheet, and force the active sheet to this one
-			sheet:SetActiveTab(sheet:AddSheet("#optimod.tabs.convar", list_convars, "icon16/wrench.png").Tab)
+			sheet:AddSheet("#optimod.convar.tab", list_convars, "icon16/wrench.png")
 		end
 		
 		do --hooks
+			local hooks = hook.GetTable()
 			local list_hooks = vgui.Create("DCategoryList", sheet)
 			
-			do
-				local label_info = vgui.Create("DLabel", sheet)
+			do --info label
+				local label_info = vgui.Create("DLabel", list_hooks)
 				
 				label_info:SetAutoStretchVertical(true)
-				label_info:SetText("#optimod.descriptions.hook")
+				label_info:SetText("#optimod.hook.description")
 				label_info:SetWrap(true)
 				list_hooks:AddItem(label_info)
 			end
 			
-			do --I don't feel like doing it the right way >:D
-				--this creates a gap between the description label and the rest of the contents, yes this is a bit hackish but what ever
-				local panel_spacer = vgui.Create("DPanel", list_hooks)
-				panel_spacer.Paint = function() end
+			do --warning label
+				local label_warning = vgui.Create("DLabel", sheet)
 				
-				panel_spacer:SetSize(0, 4)
+				label_warning:SetAutoStretchVertical(true)
+				label_warning:SetColor(Color(255, 0, 0))
+				label_warning:SetFont("DermaDefaultBold")
+				label_warning:SetText("#optimod.hook.warning")
+				label_warning:SetWrap(true)
+				list_hooks:AddItem(label_warning)
+			end
+			
+			do --button panel
+				local button_load
+				local button_save
+				local panel = vgui.Create("DPanel", list_hooks)
 				
-				list_hooks:AddItem(panel_spacer)
+				panel:Dock(FILL)
+				panel:SetHeight(frame_gui_h * 0.08)
+				
+				do --save button
+					button_save = vgui.Create("DButton", panel)
+					button_save.DoClick = config_save
+					
+					button_save:Dock(FILL)
+					button_save:SetText("#optimod.hook.save")
+				end
+				
+				do --load button
+					button_load = vgui.Create("DButton", panel)
+					button_load.DoClick = config_load
+					
+					button_load:Dock(FILL)
+					button_load:SetText("#optimod.hook.load")
+				end
+				
+				function panel:Paint() end
+				function panel:PerformLayout(width, height)
+					button_load:DockMargin(0, 4, width * 0.5 + 2, 4)
+					button_save:DockMargin(width * 0.5 + 2, 4, 0, 4)
+				end
+				
+				list_hooks:AddItem(panel)
 			end
 			
 			--add catagories with catagory lists
@@ -327,21 +386,22 @@ local function open_gui()
 				
 				--add all the controllers
 				for id, hook_datum in pairs(hook_data) do
+					local effectivity_color = effectivity_colors[hook_datum.effectivity]
 					local hook_controller = vgui.Create("OptimodHookController", list_event)
 					local check_box = hook_controller.CheckBox
 					hook_controllers[event][id] = hook_controller --store for later so we can edit them easily
 					
-					hook_controller:SetEffectivityColor(effectivity_colors[hook_datum.effectivity])
+					hook_controller:SetEffectivityColor(hooks[event] and hooks[event][id] and effectivity_color or effectivity_colors.optimal)
 					hook_controller:SetHook(event, id)
 					hook_controller:SetHookDescription("#optimod.hooks." .. event .. "." .. tostring(id))
 					
-					
 					function check_box:OnChange(value)
 						local controller = self.HookController
-						
 						local hooks = value and OptimodHooks or hook.GetTable()
 						local event = controller.HookEvent
 						local id = controller.HookID
+						
+						controller:SetEffectivityColor(value and effectivity_color or effectivity_colors.optimal)
 						
 						if hooks[event] then
 							local event_hook = hooks[event][id]
@@ -359,7 +419,7 @@ local function open_gui()
 			
 			list_hooks.Paint = panel_paint_funcitons.black
 			
-			sheet:AddSheet("#optimod.tabs.hook", list_hooks, "icon16/anchor.png")
+			sheet:AddSheet("#optimod.hook.tab", list_hooks, "icon16/anchor.png")
 		end
 		
 		--TOP docking takes priority over FILL docking, so we don't have to worry about the sheet getting covered by the credation
@@ -399,19 +459,21 @@ local function open_gui()
 	frame_gui:MakePopup()
 end
 
-local function update_hook_controller(event, id)
-	print("attempt to update hook controllers")
-	print("and text here")
-	print("hook_controllers", hook_controllers)
-	
+function update_hook_controller(event, id)
 	if hook_controllers then
-		local hook_controller = hook_controllers[event] and hook_controllers[event][id] or false
+		local hook_controller = hook_controllers[event] and hook_controllers[event][id] or nil
 		
-		if IsValid(hook_controller) then print(event, id, hook_controller) hook_controller:UpdateCheckBox() print("succ")
-		else print("almost made it") end
+		if IsValid(hook_controller) then
+			local hooks = hook.GetTable()
+			
+			hook_controller:UpdateCheckBox()
+			hook_controller:SetEffectivityColor(hooks[event] and hooks[event][id] and effectivity_colors[expensive_hooks[event][id].effectivity] or effectivity_colors.optimal)
+		end
+		
+		debug.Trace()
 		
 		return hook_controller
-	else print("failed!") end
+	end
 end
 
 --concommands
@@ -422,27 +484,21 @@ concommand.Add("optimod_save", config_save, nil, "Save the current configuration
 
 --hooks
 hook.Add("Initialize", "optimod", function()
-	local fl_hook_Add = OptimodHookAdd or hook.Add
-	local fl_hook_Remove = OptimodHookRemove or hook.Remove
+	fl_hook_Add = OptimodHookAdd or hook.Add
+	fl_hook_Remove = OptimodHookRemove or hook.Remove
 	OptimodHookAdd = fl_hook_Add
 	OptimodHookRemove = fl_hook_Remove
 	
 	function hook.Add(event, id, func, ...)
 		--update the function if the hook is re-added when it is disabled
-		if OptimodHooks[event] and OptimodHooks[event][id] then
-			print("hook.Add with stored hook")
-			
-			OptimodHooks[event][id] = func
+		if OptimodHooks[event] and OptimodHooks[event][id] then OptimodHooks[event][id] = func
 		else
-			print("hook.Add with other hook")
-			
 			fl_hook_Add(event, id, func, ...)
 			
 			if expensive_hooks[event] and expensive_hooks[event][id] then
-				print("hook.Add with tracked hook")
-				
 				--if the hook was a hook we tracked, update the GUI
 				--we also need to set its checked state to what we had in our configuration
+				--later...
 				local hook_controller = update_hook_controller(event, id)
 				
 				--hook_controller.CheckBox:SetChecked(blah)
@@ -452,36 +508,20 @@ hook.Add("Initialize", "optimod", function()
 
 	function hook.Remove(event, id, ...)
 		if OptimodHooks[event] and OptimodHooks[event][id] then
-			print("hook.Remove with stored hook")
-			
 			OptimodHooks[event][id] = nil
 			
 			if table.IsEmpty(OptimodHooks[event]) then OptimodHooks[event] = nil end
 			
 			update_hook_controller(event, id)
 		else
-			print("hook.Remove with other hook")
-			
 			fl_hook_Remove(event, id, ...)
 			
-			if expensive_hooks[event] and expensive_hooks[event][id] then
-				print("hook.Remove with tracked hook")
-				
-				update_hook_controller(event, id)
-			end
+			if expensive_hooks[event] and expensive_hooks[event][id] then update_hook_controller(event, id) end
 		end
 	end
 end)
 
---post
-calc_vars(ScrW(), ScrH())
+hook.Add("InitPostEntity", "optimod", config_load)
 
-do ---[[ reload
-	if frame_gui then
-		hook.GetTable().Initialize.optimod()
-		open_gui()
-	end
-	
-	hook.Add("HUDPaint", "optimod_test", function() surface.SetDrawColor(color_white) surface.DrawRect(100, 100, 20, 20) end)
-	--]]
-end
+--post --
+calc_vars(ScrW(), ScrH())
