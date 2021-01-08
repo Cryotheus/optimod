@@ -1,0 +1,13 @@
+{
+	"title"		:	"Optimod",
+	"type"		:	"tool",
+	"tags"		:	[ "build" ],
+	"ignore"	:
+	[
+		".editorconfig",
+		".git*",
+		"ulib.build",
+		"README.md",
+		"LICENSE.md",
+	]
+}
