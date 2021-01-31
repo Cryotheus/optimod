@@ -568,7 +568,7 @@ hook.Add("Initialize", "optimod", function()
 	end
 end)
 
-hook.Add("InitPostEntity", "optimod", function() config_load end)
+hook.Add("InitPostEntity", "optimod", function() config_load() end)
 
 --post --
 calc_vars(ScrW(), ScrH())
